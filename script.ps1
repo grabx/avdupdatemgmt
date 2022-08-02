@@ -14,7 +14,9 @@ param(
 	[Parameter(mandatory=$true)]
 	[bool]$startVMs,
 	[Parameter(mandatory=$true)]
-	[string]$patchWindow
+	[string]$patchWindow,
+	[Parameter(mandatory=$true)]
+	[bool]$patchingEnabled
 )
 
 <#
@@ -25,41 +27,37 @@ param(
 
 #>
 
-
-
-# Login to Azure
-Connect-AzAccount -Identity
-# Select subscription scope
-Select-AzSubscription $subscription
-
-# Exist if no hostPools provided
-if ($hostPools.Count -eq 0) {
-	throw "No hostPool(s) provided."
-}
-
-
-# Get HostPoolReferences for the selected scalingplan
-$hpRef = Get-AzWvdScalingPlan -Name $scalingPlan -ResourceGroupName $scalingPlanRG | select *
-# Iterate through all hostpoolreferences
-foreach ($ref in $hpRef.HostPoolReference) {
-	# If hostpool is in provided hostPool array, change scaling plan enabled to the selected setting
-	if ($ref.HostPoolArmPath.split("/")[-1] -in $hostPools) {
-		$ref.ScalingPlanEnabled = $scalingPlanEnabled
+if ($patchingEnabled) {
+	# Login to Azure
+	Connect-AzAccount -Identity
+	# Select subscription scope
+	Select-AzSubscription $subscription
+	# Exist if no hostPools provided
+	if ($hostPools.Count -eq 0) {
+		throw "No hostPool(s) provided."
 	}
-}
-# Update scaling plan settings. This will enable or disable autoscale for the selected hostpools using the provided scale plan. 
-Update-AzWvdScalingPlan -Name $scalingPlan -ResourceGroupName $scalingPlanRG -HostPoolReference $hpRef.HostPoolReference
-
-# Iterate through each hostpool and start all hosts.
-# Additionally enable drainmode using the same variable used for enabling/disabling the scalingPlan.
-foreach ($hp in $hostPools) {
-	Get-AzWvdSessionHost -HostPoolName $hp -ResourceGroupName $hostPoolRG | select * | % {
-		if ($startVMs) {
-			Start-AzVM -Id $_.ResourceId
+	# Get HostPoolReferences for the selected scalingplan
+	$hpRef = Get-AzWvdScalingPlan -Name $scalingPlan -ResourceGroupName $scalingPlanRG | select *
+	# Iterate through all hostpoolreferences
+	foreach ($ref in $hpRef.HostPoolReference) {
+		# If hostpool is in provided hostPool array, change scaling plan enabled to the selected setting
+		if ($ref.HostPoolArmPath.split("/")[-1] -in $hostPools) {
+			$ref.ScalingPlanEnabled = $scalingPlanEnabled
 		}
-		$vm = Get-AZVM -ResourceId $_.ResourceId
-		if ($vm.Tags['vm-update'] -eq $patchWindow) {
-			Update-AzWvdSessionHost -ResourceGroupName $hostPoolRG -HostPoolName $hp -Name $_.Name.split("/")[-1] -AllowNewSession:$scalingPlanEnabled
+	}
+	# Update scaling plan settings. This will enable or disable autoscale for the selected hostpools using the provided scale plan. 
+	Update-AzWvdScalingPlan -Name $scalingPlan -ResourceGroupName $scalingPlanRG -HostPoolReference $hpRef.HostPoolReference
+	# Iterate through each hostpool and start all hosts.
+	# Additionally enable drainmode using the same variable used for enabling/disabling the scalingPlan.
+	foreach ($hp in $hostPools) {
+		Get-AzWvdSessionHost -HostPoolName $hp -ResourceGroupName $hostPoolRG | select * | % {
+			if ($startVMs) {
+				Start-AzVM -Id $_.ResourceId
+			}
+			$vm = Get-AZVM -ResourceId $_.ResourceId
+			if ($vm.Tags['vm-update'] -eq $patchWindow) {
+				Update-AzWvdSessionHost -ResourceGroupName $hostPoolRG -HostPoolName $hp -Name $_.Name.split("/")[-1] -AllowNewSession:$scalingPlanEnabled
+			}
 		}
 	}
 }
